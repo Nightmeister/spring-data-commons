@@ -15,13 +15,17 @@
  */
 package org.springframework.data.mapping.context;
 
+import lombok.EqualsAndHashCode;
+
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
+import java.util.stream.Collectors;
 
 import org.springframework.core.convert.converter.Converter;
 import org.springframework.data.mapping.PersistentProperty;
+import org.springframework.data.util.TypeInformation;
 import org.springframework.lang.Nullable;
 import org.springframework.util.Assert;
 import org.springframework.util.StringUtils;
@@ -32,6 +36,7 @@ import org.springframework.util.StringUtils;
  * @author Oliver Gierke
  * @author Christoph Strobl
  */
+@EqualsAndHashCode
 class DefaultPersistentPropertyPath<P extends PersistentProperty<P>> implements PersistentPropertyPath<P> {
 
 	private static final Converter<PersistentProperty<?>, String> DEFAULT_CONVERTER = (source) -> source.getName();
@@ -124,18 +129,12 @@ class DefaultPersistentPropertyPath<P extends PersistentProperty<P>> implements 
 		Assert.hasText(delimiter, "Delimiter must not be null or empty!");
 		Assert.notNull(converter, "Converter must not be null!");
 
-		List<String> result = new ArrayList<>();
+		String result = properties.stream() //
+				.map(converter::convert) //
+				.filter(StringUtils::hasText) //
+				.collect(Collectors.joining(delimiter));
 
-		for (P property : properties) {
-
-			String convert = converter.convert(property);
-
-			if (StringUtils.hasText(convert)) {
-				result.add(convert);
-			}
-		}
-
-		return result.isEmpty() ? null : StringUtils.collectionToDelimitedString(result, delimiter);
+		return result.isEmpty() ? null : result;
 	}
 
 	/*
@@ -245,33 +244,20 @@ class DefaultPersistentPropertyPath<P extends PersistentProperty<P>> implements 
 		return properties.isEmpty();
 	}
 
-	/*
-	 * (non-Javadoc)
-	 * @see java.lang.Object#equals(java.lang.Object)
+	/**
+	 * Returns whether the curren path contains a property of the given type.
+	 * 
+	 * @param type must not be {@literal null}.
+	 * @return
 	 */
-	@Override
-	public boolean equals(@Nullable Object obj) {
+	public boolean containsPropertyOfType(@Nullable TypeInformation<?> type) {
 
-		if (this == obj) {
-			return true;
-		}
+		Assert.notNull(type, "Type must not be null!");
 
-		if (obj == null || !getClass().equals(obj.getClass())) {
-			return false;
-		}
-
-		DefaultPersistentPropertyPath<?> that = (DefaultPersistentPropertyPath<?>) obj;
-
-		return this.properties.equals(that.properties);
-	}
-
-	/*
-	 * (non-Javadoc)
-	 * @see java.lang.Object#hashCode()
-	 */
-	@Override
-	public int hashCode() {
-		return properties.hashCode();
+		return type == null //
+				? false //
+				: properties.stream() //
+						.anyMatch(property -> type.equals(property.getTypeInformation().getActualType()));
 	}
 
 	/*

@@ -16,11 +16,13 @@
 package org.springframework.data.mapping.context;
 
 import java.util.Collection;
+import java.util.function.Predicate;
 
 import org.springframework.data.mapping.MappingException;
 import org.springframework.data.mapping.PersistentEntity;
 import org.springframework.data.mapping.PersistentProperty;
 import org.springframework.data.mapping.PropertyPath;
+import org.springframework.data.util.Streamable;
 import org.springframework.data.util.TypeInformation;
 import org.springframework.lang.Nullable;
 
@@ -183,6 +185,19 @@ public interface MappingContext<E extends PersistentEntity<?, P>, P extends Pers
 	 */
 	@Deprecated
 	PersistentPropertyPath<P> getPersistentPropertyPath(InvalidPersistentPropertyPath invalidPath);
+
+	/**
+	 * Returns all {@link PersistentPropertyPath}s pointing to properties on the given type that match the given
+	 * {@link Predicate}. In case of circular references the detection will stop at the propery that references a type
+	 * that's already included in the path. Note, that is is a potentially expensive operation as results cannot be
+	 * cached.
+	 * 
+	 * @param type must not be {@literal null}.
+	 * @param predicate must not be {@literal null}.
+	 * @return
+	 * @since 2.1
+	 */
+	Streamable<PersistentPropertyPath<P>> findPersistentPropertyPaths(Class<?> type, Predicate<P> predicate);
 
 	/**
 	 * Returns the {@link TypeInformation}s for all {@link PersistentEntity}s in the {@link MappingContext}.

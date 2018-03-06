@@ -18,23 +18,20 @@ package org.springframework.data.mapping.context;
 import lombok.AccessLevel;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
-import lombok.Value;
 
 import java.beans.PropertyDescriptor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
-import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Iterator;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
 import org.springframework.beans.BeanUtils;
@@ -53,16 +50,13 @@ import org.springframework.data.mapping.model.Property;
 import org.springframework.data.mapping.model.SimpleTypeHolder;
 import org.springframework.data.util.ClassTypeInformation;
 import org.springframework.data.util.Optionals;
-import org.springframework.data.util.Pair;
 import org.springframework.data.util.Streamable;
 import org.springframework.data.util.TypeInformation;
 import org.springframework.lang.Nullable;
 import org.springframework.util.Assert;
-import org.springframework.util.ConcurrentReferenceHashMap;
 import org.springframework.util.ReflectionUtils;
 import org.springframework.util.ReflectionUtils.FieldCallback;
 import org.springframework.util.ReflectionUtils.FieldFilter;
-import org.springframework.util.StringUtils;
 
 /**
  * Base class to build mapping metadata and thus create instances of {@link PersistentEntity} and
@@ -87,8 +81,8 @@ public abstract class AbstractMappingContext<E extends MutablePersistentEntity<?
 
 	private final Optional<E> NONE = Optional.empty();
 	private final Map<TypeInformation<?>, Optional<E>> persistentEntities = new HashMap<>();
-	private final Map<TypeAndProperties, PersistentPropertyPath<P>> propertyPaths = new ConcurrentReferenceHashMap<>();
 	private final PersistentPropertyAccessorFactory persistentPropertyAccessorFactory = new ClassGeneratingPropertyAccessorFactory();
+	private final PersistentPropertyPathFactory<E, P> persistentPropertyPathFactory;
 
 	private @Nullable ApplicationEventPublisher applicationEventPublisher;
 
@@ -99,6 +93,10 @@ public abstract class AbstractMappingContext<E extends MutablePersistentEntity<?
 	private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
 	private final Lock read = lock.readLock();
 	private final Lock write = lock.writeLock();
+
+	protected AbstractMappingContext() {
+		this.persistentPropertyPathFactory = new PersistentPropertyPathFactory<>(this);
+	}
 
 	/*
 	 * (non-Javadoc)
@@ -253,10 +251,7 @@ public abstract class AbstractMappingContext<E extends MutablePersistentEntity<?
 	 */
 	@Override
 	public PersistentPropertyPath<P> getPersistentPropertyPath(PropertyPath propertyPath) {
-
-		Assert.notNull(propertyPath, "Property path must not be null!");
-
-		return getPersistentPropertyPath(propertyPath.toDotPath(), propertyPath.getOwningType());
+		return persistentPropertyPathFactory.from(propertyPath);
 	}
 
 	/*
@@ -265,11 +260,7 @@ public abstract class AbstractMappingContext<E extends MutablePersistentEntity<?
 	 */
 	@Override
 	public PersistentPropertyPath<P> getPersistentPropertyPath(String propertyPath, Class<?> type) {
-
-		Assert.notNull(propertyPath, "Property path must not be null!");
-		Assert.notNull(type, "Type must not be null!");
-
-		return getPersistentPropertyPath(propertyPath, ClassTypeInformation.from(type));
+		return persistentPropertyPathFactory.from(type, propertyPath);
 	}
 
 	/*
@@ -278,65 +269,16 @@ public abstract class AbstractMappingContext<E extends MutablePersistentEntity<?
 	 */
 	@Override
 	public PersistentPropertyPath<P> getPersistentPropertyPath(InvalidPersistentPropertyPath invalidPath) {
-		return getPersistentPropertyPath(invalidPath.getResolvedPath(), invalidPath.getType());
+		return persistentPropertyPathFactory.from(invalidPath.getType(), invalidPath.getResolvedPath());
 	}
 
-	private PersistentPropertyPath<P> getPersistentPropertyPath(String propertyPath, TypeInformation<?> type) {
-
-		return propertyPaths.computeIfAbsent(TypeAndProperties.of(type, propertyPath),
-				it -> createPersistentPropertyPath(it.getPath(), it.getType()));
-	}
-
-	/**
-	 * Creates a {@link PersistentPropertyPath} for the given parts and {@link TypeInformation}.
-	 *
-	 * @param propertyPath must not be {@literal null}.
-	 * @param type must not be {@literal null}.
-	 * @return
+	/* 
+	 * (non-Javadoc)
+	 * @see org.springframework.data.mapping.context.MappingContext#findPersistentPropertyPath(java.lang.Class, java.util.function.Predicate)
 	 */
-	private PersistentPropertyPath<P> createPersistentPropertyPath(String propertyPath, TypeInformation<?> type) {
-
-		List<String> parts = Arrays.asList(propertyPath.split("\\."));
-		DefaultPersistentPropertyPath<P> path = DefaultPersistentPropertyPath.empty();
-		Iterator<String> iterator = parts.iterator();
-		E current = getRequiredPersistentEntity(type);
-
-		while (iterator.hasNext()) {
-
-			String segment = iterator.next();
-			final DefaultPersistentPropertyPath<P> foo = path;
-			final E bar = current;
-
-			Pair<DefaultPersistentPropertyPath<P>, E> pair = getPair(path, iterator, segment, current);
-
-			if (pair == null) {
-
-				String source = StringUtils.collectionToDelimitedString(parts, ".");
-				String resolvedPath = foo.toDotPath();
-
-				throw new InvalidPersistentPropertyPath(source, type, segment, resolvedPath,
-						String.format("No property %s found on %s!", segment, bar.getName()));
-			}
-
-			path = pair.getFirst();
-			current = pair.getSecond();
-		}
-
-		return path;
-	}
-
-	@Nullable
-	private Pair<DefaultPersistentPropertyPath<P>, E> getPair(DefaultPersistentPropertyPath<P> path,
-			Iterator<String> iterator, String segment, E entity) {
-
-		P property = entity.getPersistentProperty(segment);
-
-		if (property == null) {
-			return null;
-		}
-
-		TypeInformation<?> type = property.getTypeInformation().getRequiredActualType();
-		return Pair.of(path.append(property), iterator.hasNext() ? getRequiredPersistentEntity(type) : entity);
+	@Override
+	public Streamable<PersistentPropertyPath<P>> findPersistentPropertyPaths(Class<?> type, Predicate<P> predicate) {
+		return persistentPropertyPathFactory.from(ClassTypeInformation.from(type), predicate);
 	}
 
 	/**
@@ -571,13 +513,6 @@ public abstract class AbstractMappingContext<E extends MutablePersistentEntity<?
 
 			property.getPersistentEntityTypes().forEach(AbstractMappingContext.this::addPersistentEntity);
 		}
-	}
-
-	@Value(staticConstructor = "of")
-	static class TypeAndProperties {
-
-		TypeInformation<?> type;
-		String path;
 	}
 
 	/**
